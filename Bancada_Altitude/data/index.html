@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Controle do Drone</title>
+  <script src="https://code.highcharts.com/highcharts.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { font-family: Arial; margin: 0; padding: 0; padding-bottom: 50px;}
+    nav { background: #333; padding: 10px; display: flex; }
+    nav a { color: white; padding: 10px; text-decoration: none; }
+    nav a:hover { background: #555; }
+    .content { padding: 20px; }
+    .hidden { display: none; }
+    .chart-container { margin: 20px 0; min-height: 300px; }
+    .input-container, .pid-axis-controls { margin: 10px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    .input-container label { font-weight: bold; width: 150px; }
+    .pid-axis-controls > label { font-weight: bold; width: 80px; margin-bottom: 5px; }
+    .pid-axis-controls span { display: flex; align-items: center; gap: 5px; margin-right: 15px; margin-bottom: 5px;}
+    input[type="number"] { width: 70px; padding: 5px; }
+    button { padding: 8px 12px; cursor: pointer; }
+    #statusMessages {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        background-color: #f0f0f0;
+        padding: 10px;
+        text-align: center;
+        border-top: 1px solid #ccc;
+        display: none;
+        z-index: 1000;
+    }
+    #imuStatus {
+      text-align: center;
+      margin-bottom: 10px;
+      font-weight: bold;
+    }
+    #motorControls {
+      text-align: center;
+      margin: 20px 0 10px 0;
+      gap: 10px;
+    }
+    @media (max-width: 600px) {
+      .chart-container { min-height: 200px; }
+      .input-container label, .pid-axis-controls > label { width: 110px;}
+      .pid-axis-controls span { margin-right: 5px;}
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="#" data-tab="graficos">Gráficos</a>
+    <a href="#" data-tab="pwm">PWM</a>
+    <a href="#" data-tab="pid">PID</a>
+  </nav>
+
+  <div class="content">
+    <div id="graficos" class="tab">
+      <h2 style="text-align:center;">Drone IMU Monitor</h2>
+      <div id="imuStatus">IMU: ---</div>
+      <form id="setpointForm" autocomplete="off">
+        <div class="input-container">
+          <label for="rollInput">Roll Setpoint (°):</label>
+          <input type="number" min="-45" max="45" value="0" id="rollInput" required>
+        </div>
+        <div class="input-container">
+          <label for="pitchInput">Pitch Setpoint (°):</label>
+          <input type="number" min="-45" max="45" value="0" id="pitchInput" required>
+        </div>
+        <div class="input-container">
+          <label for="yawInput">Yaw Setpoint (°):</label>
+          <input type="number" min="-360" max="360" value="0" id="yawInput" required>
+        </div>
+        <div class="input-container">
+          <label for="zInput">Altitude (Z) Setpoint (cm):</label>
+          <input type="number" min="0" max="500" value="0" id="zInput" required>
+        </div>
+      </form>
+      <div id="chart-roll" class="chart-container"></div>
+      <div id="chart-pitch" class="chart-container"></div>
+      <div id="chart-yaw" class="chart-container"></div>
+      <div id="chart-z" class="chart-container"></div>
+      <div style="text-align:center;">
+        <button id="startRecBtn">Iniciar Gravação</button>
+        <button id="stopRecBtn">Parar Gravação</button>
+      </div>
+      <div id="motorControls">
+        <button type="button" id="armMotorBtn">Armar Motor</button>
+        <button type="button" id="disarmMotorBtn">Desarmar Motor</button>
+      </div>
+    </div>
+
+    <div id="pwm" class="tab hidden">
+      <h2 style="text-align:center;">Controle de PWM (0–100%)</h2>
+      <p style="text-align:center;">Valor Atual: <span id="currentValue">--</span>%</p>
+      <div id="chart-pwm" class="chart-container"></div>
+      <form id="pwmForm" style="text-align:center; display:flex; justify-content:center; align-items:center; gap:10px;">
+        <input type="number" id="pwmInput" min="0" max="100" value="0" required>
+        <button type="submit">Enviar</button>
+        <button type="button" id="minPwmBtn">Mínimo (0%)</button>
+        <button type="button" id="maxPwmBtn">Máximo (100%)</button>
+        <button type="button" id="setupMotorBtn" style="display:none;">(Hidden, use "Armar Motor")</button>
+      </form>
+    </div>
+
+    <div id="pid" class="tab hidden">
+      <h2 style="text-align:center;">Ajuste de Ganhos PID</h2>
+      <form id="pidForm">
+        <div class="pid-axis-controls">
+          <label>Roll:</label>
+          <span>Kp: <input type="number" id="kpRoll" step="0.01" value="1.0" min="0" required></span>
+          <span>Ki: <input type="number" id="kiRoll" step="0.01" value="0.0" min="0" required></span>
+          <span>Kd: <input type="number" id="kdRoll" step="0.01" value="0.0" min="0" required></span>
+        </div>
+        <div class="pid-axis-controls">
+          <label>Pitch:</label>
+          <span>Kp: <input type="number" id="kpPitch" step="0.01" value="1.0" min="0" required></span>
+          <span>Ki: <input type="number" id="kiPitch" step="0.01" value="0.0" min="0" required></span>
+          <span>Kd: <input type="number" id="kdPitch" step="0.01" value="0.0" min="0" required></span>
+        </div>
+        <div class="pid-axis-controls">
+          <label>Yaw:</label>
+          <span>Kp: <input type="number" id="kpYaw" step="0.01" value="1.0" min="0" required></span>
+          <span>Ki: <input type="number" id="kiYaw" step="0.01" value="0.0" min="0" required></span>
+          <span>Kd: <input type="number" id="kdYaw" step="0.01" value="0.0" min="0" required></span>
+        </div>
+        <div class="pid-axis-controls">
+          <label>Altitude (Z):</label>
+          <span>Kp: <input type="number" id="kpZ" step="0.01" value="1.0" min="0" required></span>
+          <span>Ki: <input type="number" id="kiZ" step="0.01" value="0.0" min="0" required></span>
+          <span>Kd: <input type="number" id="kdZ" step="0.01" value="0.0" min="0" required></span>
+        </div>
+        <div style="text-align:center; margin-top: 20px;">
+          <button type="submit">Enviar Ganhos</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="statusMessages"></div>
+
+  <script>
+    // Internacionalização simples (pode ser expandida)
+    const MESSAGES = {
+      SETPOINT_SENT: "Setpoints enviados com sucesso!",
+      SETPOINT_ERROR: "Erro ao enviar setpoints.",
+      IMU_DATA_INCOMPLETE: "Dados IMU incompletos!",
+      IMU_NOT_CALIBRATED: "IMU não calibrada! Os dados podem ser imprecisos.",
+      PID_SENT: m => `Ganhos PID atualizados: ${m}`,
+      PID_ERROR: m => `Erro ao enviar ganhos PID: ${m}`,
+      NET_ERROR: e => `Erro de rede: ${e}`,
+      REC_STARTED: "Gravação iniciada.",
+      REC_NO_DATA: "Nenhum dado gravado para salvar.",
+      REC_STOPPED: "Gravação parada. Download do CSV iniciado.",
+      PWM_SENT: (v, m) => `PWM enviado: ${v}% (${m})`,
+      PWM_ERROR: m => `Erro ao enviar PWM: ${m}`,
+      SETUP_SENT: m => `Motores ARMADOS: ${m}`,
+      DISARM_SENT: m => `Motores DESARMADOS: ${m}`,
+      SETUP_ERROR: m => `Erro ao armar/desarmar motor: ${m}`,
+      PWM_FETCH_ERROR: m => `Erro ao buscar PWM: ${m}`,
+      CONFIRM_SETUP: "Tem certeza que deseja ARMAR os motores? (Atenção à segurança!)",
+      CONFIRM_DISARM: "Tem certeza que deseja DESARMAR os motores? (Os motores serão parados imediatamente!)",
+    };
+
+    function showStatusMessage(message, isError = false, sticky = false) {
+      const statusDiv = document.getElementById('statusMessages');
+      statusDiv.textContent = message;
+      statusDiv.style.color = isError ? 'white' : '#222';
+      statusDiv.style.backgroundColor = isError ? '#c0392b' : '#27ae60';
+      statusDiv.style.display = 'block';
+      if (!sticky) {
+        setTimeout(() => { statusDiv.style.display = 'none'; }, 3000);
+      }
+    }
+
+    function showTab(id) {
+      document.querySelectorAll('.tab').forEach(tab => tab.classList.add('hidden'));
+      const tabEl = document.getElementById(id);
+      if (tabEl) tabEl.classList.remove('hidden');
+      if (id === 'pwm') { fetchCurrentPWM(); }
+    }
+    document.querySelectorAll("nav a[data-tab]").forEach(a => {
+      a.addEventListener('click', e => {
+        e.preventDefault();
+        showTab(a.dataset.tab);
+      });
+    });
+
+    // ----- Charts (Highcharts only) -----
+    let imuCharts = {};
+    function createIMUChart(renderTo, title, color) {
+      return Highcharts.chart(renderTo, {
+        chart: { animation: false, backgroundColor: '#fafafa', height: null },
+        title: { text: title },
+        series: [
+          { name: 'Valor', data: [], type: 'line', color: color },
+          { name: 'Setpoint', data: [], type: 'line', color: '#FF0000' }
+        ],
+        plotOptions: { line: { animation: false }, series: { marker: { enabled: false } } },
+        xAxis: { type: 'datetime', dateTimeLabelFormats: { second: '%H:%M:%S' } },
+        yAxis: { title: { text: title } },
+        credits: { enabled: false },
+      });
+    }
+    function createPWMChart() {
+      return Highcharts.chart('chart-pwm', {
+        chart: { type: 'line', animation: false, backgroundColor: '#fafafa', height: null },
+        title: { text: 'PWM (%)' },
+        xAxis: { type: 'datetime', title: { text: 'Tempo' } },
+        yAxis: { min: 0, max: 100, title: { text: 'PWM (%)' } },
+        series: [{ name: 'PWM', data: [], color: '#1f77b4' }],
+        credits: { enabled: false },
+        plotOptions: { line: { animation: false }, series: { marker: { enabled: false } } }
+      });
+    }
+    let pwmChart;
+    window.addEventListener('DOMContentLoaded', () => {
+      imuCharts.roll = createIMUChart("chart-roll", "Roll (°)", "#1f77b4");
+      imuCharts.pitch = createIMUChart("chart-pitch", "Pitch (°)", "#2ca02c");
+      imuCharts.yaw = createIMUChart("chart-yaw", "Yaw (°)", "#ff7f0e");
+      imuCharts.z = createIMUChart("chart-z", "Altitude (cm)", "#9467bd");
+      pwmChart = createPWMChart();
+      showTab('graficos');
+    });
+
+    function validateSetpointInputs() {
+      const ids = ['rollInput', 'pitchInput', 'yawInput', 'zInput'];
+      let valid = true;
+      ids.forEach(id => {
+        const input = document.getElementById(id);
+        if (!input || input.value === "" || !input.checkValidity()) valid = false;
+      });
+      return valid;
+    }
+
+    function updateSetpointOnESP() {
+      if (!validateSetpointInputs()) {
+        showStatusMessage(MESSAGES.SETPOINT_ERROR, true);
+        return;
+      }
+      const roll = document.getElementById('rollInput').value;
+      const pitch = document.getElementById('pitchInput').value;
+      const yaw = document.getElementById('yawInput').value;
+      const z = document.getElementById('zInput').value;
+      const url = `/setpoint?roll=${roll}&pitch=${pitch}&yaw=${yaw}&z=${z}`;
+      fetch(url)
+        .then(response => {
+          if (response.ok) {
+            showStatusMessage(MESSAGES.SETPOINT_SENT);
+          } else {
+            showStatusMessage(MESSAGES.SETPOINT_ERROR, true);
+          }
+        })
+        .catch(error => showStatusMessage(MESSAGES.NET_ERROR(error), true));
+    }
+    ['roll','pitch','yaw','z'].forEach(axis => {
+      const input = document.getElementById(axis + 'Input');
+      if (input) input.onchange = updateSetpointOnESP;
+    });
+
+    document.getElementById("pidForm").addEventListener("submit", function(e) {
+      e.preventDefault();
+      let params = new URLSearchParams();
+      let allValid = true;
+      ['Roll', 'Pitch', 'Yaw', 'Z'].forEach(axis => {
+        ['Kp', 'Ki', 'Kd'].forEach(gain => {
+          const id = gain.toLowerCase() + axis;
+          const inp = document.getElementById(id);
+          if (!inp || !inp.checkValidity()) allValid = false;
+          params.append(gain.toLowerCase() + "_" + axis.toLowerCase(), inp.value);
+        });
+      });
+      if (!allValid) {
+        showStatusMessage("Preencha corretamente todos os ganhos!", true);
+        return;
+      }
+      fetch('/pid', {
+        method: 'POST',
+        body: params.toString(),
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      })
+      .then(async response => {
+        const message = await response.text();
+        if (response.ok) {
+          showStatusMessage(MESSAGES.PID_SENT(message));
+        } else {
+          showStatusMessage(MESSAGES.PID_ERROR(message), true);
+        }
+      })
+      .catch(error => showStatusMessage(MESSAGES.NET_ERROR(error), true));
+    });
+
+    document.getElementById("pwmForm").addEventListener("submit", function(e) {
+      e.preventDefault();
+      const value = document.getElementById('pwmInput').value;
+      if (value === "" || isNaN(value) || value < 0 || value > 100) {
+        showStatusMessage("Informe um valor PWM entre 0 e 100!", true);
+        return;
+      }
+      fetch('/pwm', {
+        method: 'POST',
+        body: value,
+        headers: { 'Content-Type': 'text/plain' }
+      })
+      .then(async response => {
+        const message = await response.text();
+        if (response.ok) {
+          showStatusMessage(MESSAGES.PWM_SENT(value, message));
+          fetchCurrentPWM();
+        } else {
+          showStatusMessage(MESSAGES.PWM_ERROR(message), true);
+        }
+      })
+      .catch(error => showStatusMessage(MESSAGES.NET_ERROR(error), true));
+    });
+
+    document.getElementById("minPwmBtn").onclick = () => document.getElementById('pwmInput').value = 0;
+    document.getElementById("maxPwmBtn").onclick = () => document.getElementById('pwmInput').value = 100;
+
+    // ARMAR MOTOR
+    document.getElementById("armMotorBtn").onclick = () => {
+      if (!confirm(MESSAGES.CONFIRM_SETUP)) return;
+      fetch('/setup_motor', {
+        method: 'POST',
+        body: '1',
+        headers: { 'Content-Type': 'text/plain' }
+      })
+      .then(async response => {
+        const message = await response.text();
+        if (response.ok) showStatusMessage(MESSAGES.SETUP_SENT(message));
+        else showStatusMessage(MESSAGES.SETUP_ERROR(message), true);
+      })
+      .catch(error => showStatusMessage(MESSAGES.NET_ERROR(error), true));
+    };
+    // DESARMAR MOTOR
+    document.getElementById("disarmMotorBtn").onclick = () => {
+      if (!confirm(MESSAGES.CONFIRM_DISARM)) return;
+      fetch('/setup_motor', {
+        method: 'POST',
+        body: '0',
+        headers: { 'Content-Type': 'text/plain' }
+      })
+      .then(async response => {
+        const message = await response.text();
+        if (response.ok) showStatusMessage(MESSAGES.DISARM_SENT(message));
+        else showStatusMessage(MESSAGES.SETUP_ERROR(message), true);
+      })
+      .catch(error => showStatusMessage(MESSAGES.NET_ERROR(error), true));
+    };
+
+    // --- NOVA FUNÇÃO ---
+    async function fetchAndPopulatePIDGains() {
+      try {
+        const response = await fetch('/get_pid_gains');
+        if (!response.ok) {
+          const errorText = await response.text();
+          showStatusMessage(`Erro ao buscar ganhos PID: ${response.status} ${errorText}`, true);
+          return;
+        }
+        const gainsText = await response.text();
+        const gainsArray = gainsText.split(',');
+
+        if (gainsArray.length < 12) {
+          showStatusMessage("Dados de ganhos PID incompletos recebidos.", true);
+          return;
+        }
+
+        // Mapeamento dos IDs dos inputs para os índices no array
+        const ids = [
+          'kpRoll', 'kiRoll', 'kdRoll',
+          'kpPitch', 'kiPitch', 'kdPitch',
+          'kpYaw', 'kiYaw', 'kdYaw',
+          'kpZ', 'kiZ', 'kdZ'
+        ];
+
+        ids.forEach((id, index) => {
+          const inputElement = document.getElementById(id);
+          if (inputElement) {
+            inputElement.value = parseFloat(gainsArray[index]).toFixed(2);
+          }
+        });
+        // showStatusMessage("Ganhos PID atuais carregados.", false); // Opcional: mensagem de sucesso
+      } catch (error) {
+        showStatusMessage(MESSAGES.NET_ERROR(error), true);
+      }
+    }
+    // --- FIM DA NOVA FUNÇÃO ---
+
+
+    function showTab(id) {
+      document.querySelectorAll('.tab').forEach(tab => tab.classList.add('hidden'));
+      const tabEl = document.getElementById(id);
+      if (tabEl) tabEl.classList.remove('hidden');
+      
+      if (id === 'pwm') { 
+        fetchCurrentPWM(); 
+      } else if (id === 'pid') { // <<< MODIFICAÇÃO AQUI
+        fetchAndPopulatePIDGains(); // Chama a função para carregar os ganhos PID
+      }
+    }
+
+    document.querySelectorAll("nav a[data-tab]").forEach(a => {
+      a.addEventListener('click', e => {
+        e.preventDefault();
+        showTab(a.dataset.tab);
+      });
+    });
+
+    let pwmChartData = [];
+    function updatePWMChart(value) {
+      const time = (new Date()).getTime();
+      pwmChartData.push([time, value]);
+      if (pwmChartData.length > 40) pwmChartData.shift();
+      pwmChart.series[0].setData(pwmChartData, true, false, false);
+    }
+    let isFetchingPWM = false;
+    async function fetchCurrentPWM() {
+      if (isFetchingPWM) return;
+      isFetchingPWM = true;
+      try {
+        const res = await fetch('/pwm');
+        if (!res.ok) {
+          const errorText = await res.text();
+          showStatusMessage(MESSAGES.PWM_FETCH_ERROR(`${res.status} ${errorText}`), true);
+          isFetchingPWM = false;
+          return;
+        }
+        const val = parseInt(await res.text());
+        document.getElementById('currentValue').innerText = isNaN(val) ? "--" : val;
+        updatePWMChart(isNaN(val) ? 0 : val);
+      } catch (error) {
+        showStatusMessage(MESSAGES.NET_ERROR(error), true);
+      }
+      isFetchingPWM = false;
+    }
+    setInterval(() => {
+      if (!document.getElementById('pwm').classList.contains('hidden')) {
+        fetchCurrentPWM();
+      }
+    }, 2000);
+
+    // Gravação de Dados IMU
+    let recording = false;
+    let recordedData = [];
+    document.getElementById("startRecBtn").onclick = () => {
+      recordedData = [];
+      recording = true;
+      showStatusMessage(MESSAGES.REC_STARTED);
+    };
+    document.getElementById("stopRecBtn").onclick = () => {
+      recording = false;
+      if (recordedData.length === 0) {
+        showStatusMessage(MESSAGES.REC_NO_DATA, true);
+        return;
+      }
+      let csv = 'Timestamp,Roll,Pitch,Yaw,Z,SetpointRoll,SetpointPitch,SetpointYaw,SetpointZ\n';
+      recordedData.forEach(row => { csv += row.join(',') + '\n'; });
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'drone_dados_imu.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showStatusMessage(MESSAGES.REC_STOPPED);
+    };
+
+    // Fetch/Update IMU data (agora lida com campo de calibragem)
+    let isFetchingIMU = false;
+    setInterval(() => {
+      if (isFetchingIMU) return;
+      if (document.getElementById('graficos').classList.contains('hidden')) return;
+      isFetchingIMU = true;
+      fetch("/data")
+        .then(res => {
+          if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+          return res.text();
+        })
+        .then(text => {
+          const arr = text.split(",");
+          if (arr.length < 9) {
+            showStatusMessage(MESSAGES.IMU_DATA_INCOMPLETE, true);
+            isFetchingIMU = false;
+            return;
+          }
+          let [roll, pitch, yaw, z, spRoll, spPitch, spYaw, spZ, imuCal] = arr.map(x => isNaN(x) ? x : parseFloat(x));
+          let time = (new Date()).getTime();
+
+          function updateChart(chart, val, sp) {
+            if (chart.series[0].data.length > 40) chart.series[0].removePoint(0, false, false);
+            if (chart.series[1].data.length > 40) chart.series[1].removePoint(0, false, false);
+            chart.series[0].addPoint([time, val], false);
+            chart.series[1].addPoint([time, sp], false);
+            chart.redraw();
+          }
+
+          updateChart(imuCharts.roll, roll, spRoll);
+          updateChart(imuCharts.pitch, pitch, spPitch);
+          updateChart(imuCharts.yaw, yaw, spYaw);
+          updateChart(imuCharts.z, z, spZ);
+
+          // IMU status visual
+          const imuStatusDiv = document.getElementById("imuStatus");
+          if (parseInt(imuCal) === 1) {
+            imuStatusDiv.innerText = "IMU: CALIBRADA";
+            imuStatusDiv.style.color = "green";
+          } else {
+            imuStatusDiv.innerText = "IMU: NÃO CALIBRADA";
+            imuStatusDiv.style.color = "red";
+            showStatusMessage(MESSAGES.IMU_NOT_CALIBRATED, true, true);
+          }
+
+          if (recording) recordedData.push([new Date().toISOString(), roll, pitch, yaw, z, spRoll, spPitch, spYaw, spZ]);
+        })
+        .catch(error => {
+          if (!document.getElementById('graficos').classList.contains('hidden'))
+            showStatusMessage("Erro ao buscar dados IMU: " + error, true, false);
+        })
+        .finally(() => { isFetchingIMU = false; });
+    }, 500);
+
+  </script>
+</body>
+</html>
